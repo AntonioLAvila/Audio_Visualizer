@@ -1,1 +1,1 @@
-# Audio_Vizualizer
+# Audio_Visualizer
