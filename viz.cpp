@@ -15,7 +15,16 @@
 #define FRAMES_PER_BUFFER 2048 // preferable power of 2
 #define DOUBLE_AUDIBLE_BAND 44100
 #define FFT_OUT_LENGTH 44100/2 + 1
-#define REQUESTED_NUMBER_OF_POINTS 100
+#define REQUESTED_NUMBER_OF_POINTS 1000
+
+double* window = (double*)malloc(DOUBLE_AUDIBLE_BAND * sizeof(double));
+
+void fillHannWindow(){
+    for (int n = 0; n < DOUBLE_AUDIBLE_BAND; n++){
+        window[n] = 0.5*(1-cos(2*M_PI*n/DOUBLE_AUDIBLE_BAND));
+        // window[n] = 1;
+    }
+}
 
 void printFileInfo(SF_INFO* info){
     printf("Sample Rate = %d Hz\n", info->samplerate);
@@ -27,7 +36,11 @@ void printFileInfo(SF_INFO* info){
 }
 
 double ampTodB(double A){
-    return 20 * log10(A);
+    return 20 * log10(A + 1e-10);
+}
+
+double clampdB(double db) {
+    return std::min(0.0, std::max(-120.0, db));
 }
 
 double magnitude(fftw_complex c){
@@ -41,11 +54,16 @@ int64_t getTime(){
     return ms;
 }
 
-std::vector<int> logspace(double start, double stop, int num) {
+std::vector<int> logspace(double start, double stop, int num, int samplerate) {
     std::vector<int> res(num);
     double step = (log10(stop) - log10(start)) / (num - 1);
     for (int i = 0; i < num; i++){
-        res[i] = start * pow(10, i*step);
+        double freq = start * pow(10, i*step); // target freq in Hz
+        int index = freq * DOUBLE_AUDIBLE_BAND / samplerate;
+        res[i] = index;
+        if (index < FFT_OUT_LENGTH){
+            res[i] = index;
+        }
     }
     res.erase(unique(res.begin(), res.end()), res.end());
     return res;
@@ -86,31 +104,41 @@ static int audioCallback(
     float* out = (float*)outputBuffer;
     double sum = 0;
 
-    // fft
+    
     long int fftIdx;
-    if (song->totalFrames - song->lastFrame < 44100){
-        fftIdx = 44100;
-    }else{
+    if (song->lastFrame + DOUBLE_AUDIBLE_BAND >= song->totalFrames) {
+        fftIdx = song->totalFrames - DOUBLE_AUDIBLE_BAND;
+    } else {
         fftIdx = song->lastFrame;
     }
+    // copy and window
+    double leftSignal[DOUBLE_AUDIBLE_BAND];
+    double rightSignal[DOUBLE_AUDIBLE_BAND];
+    for (int n = 0; n < DOUBLE_AUDIBLE_BAND; n++){
+        leftSignal[n] = song->leftChannel[fftIdx+n] * window[n];
+        rightSignal[n] = song->rightChannel[fftIdx+n] * window[n];
+    }
+    // fft
     fftw_plan leftPlan = fftw_plan_dft_r2c_1d(
         DOUBLE_AUDIBLE_BAND,
-        &song->leftChannel[fftIdx],
+        leftSignal,
         song->fftOutLeft,
         FFTW_ESTIMATE
     );
     fftw_plan rightPlan = fftw_plan_dft_r2c_1d(
         DOUBLE_AUDIBLE_BAND,
-        &song->rightChannel[fftIdx],
+        rightSignal,
         song->fftOutRight,
         FFTW_ESTIMATE
     );
     fftw_execute(leftPlan); fftw_execute(rightPlan);
     for (int i = 0; i < FFT_OUT_LENGTH; i++){
         // song->levels[i] = (magnitude(song->fftOutLeft[i]) + magnitude(song->fftOutRight[i])) / 2;
-        double dBLeft = ampTodB(magnitude(song->fftOutLeft[i]));
-        double dBRight = ampTodB(magnitude(song->fftOutRight[i]));
-        song->levels[i] = (dBLeft + dBRight)/2;
+        double magLeft = magnitude(song->fftOutLeft[i]) / DOUBLE_AUDIBLE_BAND;
+        double magRight = magnitude(song->fftOutRight[i]) / DOUBLE_AUDIBLE_BAND;
+        double avgdB = ampTodB((magLeft + magRight)/2);
+        // song->levels[i] = clampdB(avgdB);
+        song->levels[i] = avgdB;
     }
 
     for (int i = 0; i < framesPerBuffer; i++){
@@ -120,6 +148,7 @@ static int audioCallback(
         song->lastFrame += 1;
     }
     song->soundLevel = sum/framesPerBuffer;
+    fftw_destroy_plan(leftPlan); fftw_destroy_plan(rightPlan);
     return 0;
 }
 
@@ -140,16 +169,30 @@ class BarVizualizer{
             heights = std::vector<double>(numBars, 0.f);
             for (int i = 0; i < numBars; i++){
                 bars[i] = sf::RectangleShape(sf::Vector2f(barWidth, 0.f));
-                bars[i].setOrigin(sf::Vector2f(-barWidth*i, -screenHeight));
+                bars[i].setPosition(barWidth*i, screenHeight);
+                bars[1].setOrigin(0,1);
                 bars[i].setFillColor(sf::Color::Cyan);
             }
         }
         
+        // void setHeights(std::vector<int> indices, std::vector<double> levels){
+        //     // numBars = length of indices
+        //     for (int i = 0; i < numBars; i++){
+        //         float curWidth = bars[i].getSize().x;
+        //         bars[i].setSize(sf::Vector2f(curWidth, levels[indices[i]] * 5));
+        //     }
+        // }
         void setHeights(std::vector<int> indices, std::vector<double> levels){
-            // numBars = length of indices
-            for (int i = 0; i < numBars; i++){
+            for (int i = 0; i < numBars - 1; i++){
+                double sum = 0;
+                int count = 0;
+                for (int j = indices[i]; j < indices[i+1] && j < levels.size(); j++){
+                    sum += levels[j];
+                    count++;
+                }
+                double avgdB = count > 0 ? sum / count : -120;
                 float curWidth = bars[i].getSize().x;
-                bars[i].setSize(sf::Vector2f(curWidth, -levels[indices[i]] * 5));
+                bars[i].setSize(sf::Vector2f(curWidth, (avgdB+120) * -5));
             }
         }
 
@@ -161,6 +204,7 @@ class BarVizualizer{
 };
 
 int main(void){
+    fillHannWindow();
     SF_INFO info;
     SNDFILE* file  = sf_open("./music/snow.wav", SFM_READ, &info);
     printFileInfo(&info);
@@ -201,9 +245,10 @@ int main(void){
     if(err != paNoError) Pa_Terminate();
     int64_t startTime = getTime();
 
-    // Graphics
+    // Graphic design is my passion
     sf::RenderWindow window(sf::VideoMode(SCREEN_WIDTH, SCREEN_HEIGHT), "Vizualizer");
-    std::vector<int> logLinearIndices = logspace(20, 20000, REQUESTED_NUMBER_OF_POINTS);
+    std::vector<int> logLinearIndices = logspace(20, 20000, REQUESTED_NUMBER_OF_POINTS, info.samplerate);
+
     int numBars = logLinearIndices.size();
     double barWidth = SCREEN_WIDTH/numBars;
     BarVizualizer viz = BarVizualizer(&window, numBars, barWidth, SCREEN_HEIGHT);
