@@ -116,7 +116,7 @@ static int audioCallback(
     for (int i = 0; i < framesPerBuffer; i++){
         *out++ = song->leftChannel[song->lastFrame];
         *out++ = song->rightChannel[song->lastFrame];
-        sum += abs((song->leftChannel[song->lastFrame]) + abs(song->rightChannel[song->lastFrame]))/2;
+        sum += (abs(song->leftChannel[song->lastFrame]) + abs(song->rightChannel[song->lastFrame]))/2;
         song->lastFrame += 1;
     }
     song->soundLevel = sum/framesPerBuffer;
