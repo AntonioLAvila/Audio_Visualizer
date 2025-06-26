@@ -15,14 +15,14 @@
 #define FRAMES_PER_BUFFER 2048 // preferable power of 2
 #define DOUBLE_AUDIBLE_BAND 44100
 #define FFT_OUT_LENGTH 44100/2 + 1
-#define REQUESTED_NUMBER_OF_POINTS 1000
+#define REQUESTED_NUMBER_OF_POINTS 100
 
 double* window = (double*)malloc(DOUBLE_AUDIBLE_BAND * sizeof(double));
 
 void fillHannWindow(){
     for (int n = 0; n < DOUBLE_AUDIBLE_BAND; n++){
-        window[n] = 0.5*(1-cos(2*M_PI*n/DOUBLE_AUDIBLE_BAND));
-        // window[n] = 1;
+        // window[n] = 0.5*(1-cos(2*M_PI*n/DOUBLE_AUDIBLE_BAND));
+        window[n] = 1;
     }
 }
 
@@ -134,11 +134,11 @@ static int audioCallback(
     fftw_execute(leftPlan); fftw_execute(rightPlan);
     for (int i = 0; i < FFT_OUT_LENGTH; i++){
         // song->levels[i] = (magnitude(song->fftOutLeft[i]) + magnitude(song->fftOutRight[i])) / 2;
-        double magLeft = magnitude(song->fftOutLeft[i]) / DOUBLE_AUDIBLE_BAND;
-        double magRight = magnitude(song->fftOutRight[i]) / DOUBLE_AUDIBLE_BAND;
-        double avgdB = ampTodB((magLeft + magRight)/2);
-        // song->levels[i] = clampdB(avgdB);
-        song->levels[i] = avgdB;
+        double magLeft = 2 * magnitude(song->fftOutLeft[i]) / DOUBLE_AUDIBLE_BAND;
+        double magRight = 2 * magnitude(song->fftOutRight[i]) / DOUBLE_AUDIBLE_BAND;
+        double avgdB = ampTodB((magLeft*magLeft + magRight*magRight)/2);
+        song->levels[i] = clampdB(avgdB);
+        // song->levels[i] = avgdB;
     }
 
     for (int i = 0; i < framesPerBuffer; i++){
@@ -170,18 +170,11 @@ class BarVizualizer{
             for (int i = 0; i < numBars; i++){
                 bars[i] = sf::RectangleShape(sf::Vector2f(barWidth, 0.f));
                 bars[i].setPosition(barWidth*i, screenHeight);
-                bars[1].setOrigin(0,1);
+                bars[i].setOrigin(0,1);
                 bars[i].setFillColor(sf::Color::Cyan);
             }
         }
         
-        // void setHeights(std::vector<int> indices, std::vector<double> levels){
-        //     // numBars = length of indices
-        //     for (int i = 0; i < numBars; i++){
-        //         float curWidth = bars[i].getSize().x;
-        //         bars[i].setSize(sf::Vector2f(curWidth, levels[indices[i]] * 5));
-        //     }
-        // }
         void setHeights(std::vector<int> indices, std::vector<double> levels){
             for (int i = 0; i < numBars - 1; i++){
                 double sum = 0;
@@ -192,7 +185,12 @@ class BarVizualizer{
                 }
                 double avgdB = count > 0 ? sum / count : -120;
                 float curWidth = bars[i].getSize().x;
-                bars[i].setSize(sf::Vector2f(curWidth, (avgdB+120) * -5));
+
+                double norm = (avgdB + 120)/120; // [0, 1]
+                norm = log10(1 + 9 * norm); // log
+                double height = norm * SCREEN_HEIGHT/2;
+
+                bars[i].setSize(sf::Vector2f(curWidth, -height));
             }
         }
 
