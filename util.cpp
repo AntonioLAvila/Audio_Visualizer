@@ -106,6 +106,25 @@ vector<pair<int, int>> createOctaveBands(int sampleRate) {
     return bands;
 }
 
+// vector<pair<int,int>> createOctaveBands(int samplerate){
+//     int fftBins = FFT_LENGTH / 2;
+//     double f_min = 20.0;
+//     double f_max = samplerate / 2;
+//     double ratio = pow(f_max / f_min, 1.0 / REQUESTED_NUMBER_OF_POINTS);
+
+//     vector<pair<int, int>> bands;
+//     double prev = f_min;
+//     for (int i = 0; i < REQUESTED_NUMBER_OF_POINTS; ++i){
+//         double next = prev * ratio;
+//         int startBin = ceil(prev * FFT_LENGTH / samplerate);
+//         int endBin = floor(next * FFT_LENGTH / samplerate);
+//         bands.push_back({startBin, endBin});
+//         prev = next;
+//     }
+//     return bands;
+// }
+
+
 
 
 typedef struct SongData {
