@@ -155,7 +155,7 @@ class BarVizualizer{
 
 int main(void){
     SF_INFO info;
-    SNDFILE* file  = sf_open("./music/snow.wav", SFM_READ, &info);
+    SNDFILE* file  = sf_open("./music/song.flac", SFM_READ, &info);
     printFileInfo(&info);
     const int samplerate = info.samplerate;
     const float duration = info.frames/samplerate;

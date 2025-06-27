@@ -78,7 +78,6 @@ double aWeighting(double f){
 
 
 vector<pair<int, int>> createOctaveBands(int sampleRate) {
-    int fftOutLength = FFT_LENGTH / 2 + 1;
     double fMax = sampleRate / 2.0;
 
     // Create logarithmically spaced frequency edges
@@ -97,8 +96,8 @@ vector<pair<int, int>> createOctaveBands(int sampleRate) {
         int binEnd = static_cast<int>(ceil(fEnd * REQUESTED_NUMBER_OF_POINTS / sampleRate));
 
         // Clamp to FFT range
-        binStart = std::clamp(binStart, 0, fftOutLength - 1);
-        binEnd = std::clamp(binEnd, binStart + 1, fftOutLength);
+        binStart = clamp(binStart, 0, FFT_OUT_LENGTH - 1);
+        binEnd = clamp(binEnd, binStart + 1, FFT_OUT_LENGTH);
 
         bands.emplace_back(binStart, binEnd);
     }
@@ -172,6 +171,8 @@ typedef struct SongData {
     ~SongData() {
         fftw_free(leftOutBuffer);
         fftw_free(rightOutBuffer);
+        fftw_free(leftSignalBuffer);
+        fftw_free(rightSignalBuffer);
         fftw_destroy_plan(rightPlan);
         fftw_destroy_plan(leftPlan);
     }
