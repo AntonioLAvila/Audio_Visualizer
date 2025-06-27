@@ -10,114 +10,10 @@
 #include <SFML/Graphics.hpp>
 #include <fftw3.h>
 
-#define SCREEN_WIDTH 1920
-#define SCREEN_HEIGHT 1080
-#define FRAMES_PER_BUFFER 2048
-#define FFT_LENGTH 2048
-#define FFT_OUT_LENGTH 2048/2 + 1
-#define REQUESTED_NUMBER_OF_POINTS 128
+#include "constants.cpp"
+#include "util.cpp"
 
-double* fftWindow = (double*)malloc(FFT_LENGTH * sizeof(double));
-
-void fillHannWindow(){
-    for (int n = 0; n < FFT_LENGTH; n++){
-        fftWindow[n] = 0.5*(1-cos(2*M_PI*n/(FFT_LENGTH - 1)));
-    }
-}
-
-
-void printFileInfo(SF_INFO* info){
-    printf("Sample Rate = %d Hz\n", info->samplerate);
-    printf("Channels = %d\n", info->channels);
-    printf("Format = 0x%x\n", info->format);
-    printf("Sections = %d\n", info->sections);
-    printf("Seekable = %d\n", info->seekable);
-    printf("Frames = %ld\n", info->frames);
-}
-
-
-double powerTodB(double A){
-    return 10 * log10(A + 1e-10);
-}
-
-
-double clampdB(double db) {
-    return std::min(0.0, std::max(-120.0, db));
-}
-
-
-double magnitude(fftw_complex c){
-    return sqrt(pow(c[0],2) + pow(c[1],2));
-}
-
-
-void scale(fftw_complex c, double scale){
-    c[0] = c[0]*scale;
-    c[1] = c[1]*scale;
-}
-
-
-int64_t getTime(){
-    auto time = std::chrono::high_resolution_clock::now();
-    auto dur = time.time_since_epoch();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
-    return ms;
-}
-
-
-std::vector<int> linspace(double start, double stop, int num) {
-    std::vector<int> res(num);
-    double step = (stop - start)/num;
-    for (int i = 0; i < num; i++){
-        res[i] = start + (i * step);
-    }
-    return res;
-}
-
-
-std::vector<std::pair<int, int>> getBands(std::vector<int>& indices) {
-    std::vector<std::pair<int, int>> bands;
-    for (size_t i = 0; i < indices.size() - 1; i++) {
-        bands.push_back({indices[i], indices[i + 1]});
-    }
-    return bands;
-}
-
-
-double aWeighting(double freq){
-    double f2 = freq * freq;
-    double num = 12200 * 12200 * f2 * f2;
-    double den = (f2 + 20.6 * 20.6) * sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) * (f2 + 12200 * 12200);
-    return 20 * log10(num / den) + 2.0; // +2 dB calibration
-}
-
-
-typedef struct SongData {
-    double* leftChannel;
-    double* rightChannel;
-    long int totalFrames;
-    long int lastFrame;
-    int samplerate;
-
-    double soundLevel;
-    std::vector<double> levels;
-
-    fftw_complex* leftOutBuffer;
-    fftw_complex* rightOutBuffer;
-
-    SongData(double* l, double* r, long int t, int fs)
-        : leftChannel(l), rightChannel(r), totalFrames(t), lastFrame(0), soundLevel(0.0), samplerate(fs), levels(FFT_LENGTH)
-    {
-        leftOutBuffer = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * FFT_OUT_LENGTH);
-        rightOutBuffer = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * FFT_OUT_LENGTH);
-    }
-
-    ~SongData() {
-        fftw_free(leftOutBuffer);
-        fftw_free(rightOutBuffer);
-    }
-} SongData;
-
+using namespace std;
 
 static int audioCallback(
     const void* inputBuffer,
@@ -129,7 +25,6 @@ static int audioCallback(
 ){
     SongData* song = (SongData*)userData;
     float* out = (float*)outputBuffer;
-    double sum = 0;
     
     long int fftIdx;
     if (song->lastFrame + FFT_LENGTH >= song->totalFrames) {
@@ -137,28 +32,40 @@ static int audioCallback(
     } else {
         fftIdx = song->lastFrame;
     }
-    // copy and window
-    double leftSignal[FFT_LENGTH];
-    double rightSignal[FFT_LENGTH];
-    for (int n = 0; n < FFT_LENGTH; n++){
-        leftSignal[n] = song->leftChannel[fftIdx+n] * fftWindow[n];
-        rightSignal[n] = song->rightChannel[fftIdx+n] * fftWindow[n];
-    }
-    // fft
-    fftw_plan leftPlan = fftw_plan_dft_r2c_1d(
-        FFT_LENGTH,
-        leftSignal,
-        song->leftOutBuffer,
-        FFTW_ESTIMATE
-    );
-    fftw_plan rightPlan = fftw_plan_dft_r2c_1d(
-        FFT_LENGTH,
-        rightSignal,
-        song->rightOutBuffer,
-        FFTW_ESTIMATE
-    );
-    fftw_execute(leftPlan); fftw_execute(rightPlan);
 
+    // window
+    double sum = 0;
+    int frameWriteCount = 0;
+    for (int n = 0; n < FFT_LENGTH; n++){
+        // write out song
+        if (n < framesPerBuffer){
+            *out++ = song->leftChannel[song->lastFrame];
+            *out++ = song->rightChannel[song->lastFrame];
+            double powerLeft = song->leftChannel[song->lastFrame] * song->leftChannel[song->lastFrame];
+            double powerRight = song->rightChannel[song->lastFrame] * song->rightChannel[song->lastFrame];
+            sum += (powerLeft + powerRight)/2;
+            frameWriteCount += 1;
+            song->lastFrame += 1;
+        }
+        // window
+        song->leftSignalBuffer[n] = song->leftChannel[fftIdx+n] * hannWindow[n];
+        song->rightSignalBuffer[n] = song->rightChannel[fftIdx+n] * hannWindow[n];
+    }
+    // write out rest of song
+    while (frameWriteCount < framesPerBuffer){
+        *out++ = song->leftChannel[song->lastFrame];
+        *out++ = song->rightChannel[song->lastFrame];
+        double powerLeft = song->leftChannel[song->lastFrame] * song->leftChannel[song->lastFrame];
+        double powerRight = song->rightChannel[song->lastFrame] * song->rightChannel[song->lastFrame];
+        sum += (powerLeft + powerRight)/2;
+        frameWriteCount += 1;
+        song->lastFrame += 1;
+    }
+    song->soundLevel = sum/framesPerBuffer;
+
+    // fft
+    fftw_execute(song->leftPlan); fftw_execute(song->rightPlan);
+    // calc dB
     for (int i = 0; i < FFT_LENGTH; i++){
         fftw_complex leftW, rightW;
         if (i < FFT_OUT_LENGTH){
@@ -176,43 +83,29 @@ static int audioCallback(
             rightW[0] = song->rightOutBuffer[mirror_i][0];
             rightW[1] = -song->rightOutBuffer[mirror_i][1];
         }
-        double magLeft = magnitude(leftW);
-        double magRight = magnitude(rightW);
 
-        // Normalize
-        double scale = 1.0 / FFT_LENGTH;
-        if (i == 0 || i == FFT_LENGTH / 2){
-            magLeft *= scale;
-            magRight *= scale;
-        }else{
-            magLeft *= 2.0 * scale;
-            magRight *= 2.0 * scale;
+        double powerLeft = 2 * (leftW[0]*leftW[0] + leftW[1]*leftW[1]) / (FFT_LENGTH * FFT_LENGTH); // 2 accounts for Hann window halving power
+        double powerRight = 2 * (rightW[0]*rightW[0] + rightW[1]*rightW[1]) / (FFT_LENGTH * FFT_LENGTH);
+        if (i > 0 && i < FFT_LENGTH/2) {
+            powerLeft *= 2;  // Account for symmetric frequencies
+            powerRight *= 2;
         }
 
-        double power = (magLeft*magLeft + magRight*magRight)/2;
         double freq = i * song->samplerate / FFT_LENGTH;
-        double db = powerTodB(sqrt(power)) + aWeighting(freq);
-        song->levels[i] = clampdB(db);
+        double aWeight = aWeighting(freq);
+        powerLeft *= pow(10, aWeight/10);
+        powerRight *= pow(10, aWeight/10);
+        double power = (powerLeft + powerRight)/2;
+        song->levels[i] = power;
     }
-
-    for (int i = 0; i < framesPerBuffer; i++){
-        *out++ = song->leftChannel[song->lastFrame];
-        *out++ = song->rightChannel[song->lastFrame];
-        double powerLeft = song->leftChannel[song->lastFrame] * song->leftChannel[song->lastFrame];
-        double powerRight = song->rightChannel[song->lastFrame] * song->rightChannel[song->lastFrame];
-        sum += (powerLeft + powerRight)/2;
-        song->lastFrame += 1;
-    }
-    song->soundLevel = sum/framesPerBuffer;
-    fftw_destroy_plan(leftPlan); fftw_destroy_plan(rightPlan);
     return 0;
 }
 
 
 class BarVizualizer{
     private:
-        std::vector<sf::RectangleShape> bars;
-        std::vector<double> heights;
+        vector<sf::RectangleShape> bars;
+        vector<double> heights;
         double barWidth;
         double numBars;
         sf::RenderWindow* window;
@@ -222,8 +115,8 @@ class BarVizualizer{
             barWidth = width;
             numBars = n;
             window = win;
-            bars = std::vector<sf::RectangleShape>(numBars);
-            heights = std::vector<double>(numBars, 0.f);
+            bars = vector<sf::RectangleShape>(numBars);
+            heights = vector<double>(numBars, 0.f);
             for (int i = 0; i < numBars; i++){
                 bars[i] = sf::RectangleShape(sf::Vector2f(barWidth, 0.f));
                 bars[i].setPosition(barWidth*i, SCREEN_HEIGHT);
@@ -231,18 +124,8 @@ class BarVizualizer{
                 bars[i].setFillColor(sf::Color::Cyan);
             }
         }
-        
-        void setHeights(std::vector<int> indices, std::vector<double> levels){
-            for (int i = 0; i < indices.size(); i++){
-                float norm = (levels[indices[i]] + 120)/120; // [0, 1]
-                norm = pow(norm, 1.5); // gamma compression
-                float height = norm * SCREEN_HEIGHT/2;
-                float curWidth = bars[i].getSize().x;
-                bars[i].setSize(sf::Vector2f(curWidth, -height));
-            }
-        }
 
-        void setHeightsFromBands(std::vector<std::pair<int,int>> bands, std::vector<double> levels){
+        void setHeights(vector<pair<int,int>> bands, vector<double> levels){
             for (int i = 0; i < bands.size(); i++){
                 auto [start, end] = bands[i];
                 double sum = 0.0;
@@ -251,12 +134,14 @@ class BarVizualizer{
                     sum += levels[j];
                     count++;
                 }
-                double avg = count > 0 ? sum / count : -120;
-                float norm = (avg + 120)/120;
-                norm = pow(norm, 1.5); // gamma correction
+                double avgPower = count > 0 ? sum / count : 0;
+                double db = clampdB(powerTodB(avgPower));
+                float norm = (db + DB_LOW)/DB_LOW;
+                norm = pow(norm, 1.5);
                 float height = norm * SCREEN_HEIGHT / 2;
                 float curWidth = bars[i].getSize().x;
-                bars[i].setSize(sf::Vector2f(curWidth, -height));
+                heights[i] = 0.9 * heights[i] + 0.1 * height;
+                bars[i].setSize(sf::Vector2f(curWidth, -heights[i]));
             }
         }
 
@@ -269,7 +154,6 @@ class BarVizualizer{
 
 
 int main(void){
-    fillHannWindow();
     SF_INFO info;
     SNDFILE* file  = sf_open("./music/snow.wav", SFM_READ, &info);
     printFileInfo(&info);
@@ -312,14 +196,9 @@ int main(void){
 
     // Graphic design is my passion
     sf::RenderWindow window(sf::VideoMode(SCREEN_WIDTH, SCREEN_HEIGHT), "Vizualizer");
-    std::vector<int> logLinearIndices = linspace(0, song.levels.size(), REQUESTED_NUMBER_OF_POINTS);
+    vector<pair<int, int>> bands = createOctaveBands(info.samplerate);
 
-    for (int i = 0; i < logLinearIndices.size(); i++){
-        printf("%d, %d\n", logLinearIndices[i], logLinearIndices[i]*info.samplerate/FFT_LENGTH);
-    }
-    printf("FFT Resolution: %dHz\n", info.samplerate/FFT_LENGTH);
-
-    int numBars = logLinearIndices.size();
+    int numBars = REQUESTED_NUMBER_OF_POINTS;
     double barWidth = SCREEN_WIDTH/numBars;
     BarVizualizer viz = BarVizualizer(&window, numBars, barWidth);
     // circle
@@ -337,7 +216,7 @@ int main(void){
                 goto close;
             }
         }
-        viz.setHeights(logLinearIndices, song.levels);
+        viz.setHeights(bands, song.levels);
         window.clear();
         viz.draw();
         scale = (1-alpha)*scale + alpha*song.soundLevel;
@@ -350,7 +229,6 @@ int main(void){
 close:
     fftw_free(rightChannel);
     fftw_free(leftChannel);
-    free(fftWindow);
     // Stop and close stream
     err = Pa_StopStream(stream);
     if(err != paNoError) Pa_Terminate();
