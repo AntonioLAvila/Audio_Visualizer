@@ -69,11 +69,15 @@ vector<int> linspace(double start, double stop, int num) {
 }
 
 
-double aWeighting(double f){
+double aWeightCurve(double f){
     double f2 = f * f;
-    double num = 12200 * 12200 * f2 * f2;
-    double den = (f2 + 20.6 * 20.6) * sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) * (f2 + 12200 * 12200);
-    return 20 * log10(num / den) + 2.0; // +2 dB calibration
+    double num = 12194 * 12194 * f2 * f2;
+    double den = (f2 + 20.6 * 20.6) * sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) * (f2 + 12194 * 12194);
+    return num/den;
+}
+
+double aWeightingdB(double f){
+    return 20 * log10(aWeightCurve(f)) + 2.0;
 }
 
 
@@ -139,11 +143,11 @@ typedef struct SongData {
     fftw_complex* leftOutBuffer;
     fftw_complex* rightOutBuffer;
 
-    double soundLevel;
-    std::vector<double> levels;
-
     fftw_plan leftPlan;
     fftw_plan rightPlan;
+
+    double soundLevel;
+    std::vector<double> levels;
 
     SongData(double* l, double* r, long int t, int fs)
         : leftChannel(l), rightChannel(r), totalFrames(t), lastFrame(0), soundLevel(0.0), samplerate(fs), levels(FFT_LENGTH){      

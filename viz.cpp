@@ -92,9 +92,11 @@ static int audioCallback(
         }
 
         double freq = i * song->samplerate / FFT_LENGTH;
-        double aWeight = aWeighting(freq);
-        powerLeft *= pow(10, aWeight/10);
-        powerRight *= pow(10, aWeight/10);
+        double aWeight = aWeightCurve(freq);
+        // powerLeft *= pow(10, (aWeight-2)/20);
+        // powerRight *= pow(10, (aWeight-2)/20);
+        powerLeft *= aWeight;
+        powerRight *= aWeight;
         double power = (powerLeft + powerRight)/2;
         song->levels[i] = power;
     }
