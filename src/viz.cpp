@@ -10,8 +10,9 @@
 #include <SFML/Graphics.hpp>
 #include <fftw3.h>
 
-#include "constants.cpp"
-#include "util.cpp"
+#include "constants.h"
+#include "util.h"
+#include "songdata.h"
 
 using namespace std;
 
@@ -33,7 +34,6 @@ static int audioCallback(
         fftIdx = song->lastFrame;
     }
 
-    // window
     double sum = 0;
     int frameWriteCount = 0;
     for (int n = 0; n < FFT_LENGTH; n++){
@@ -45,11 +45,10 @@ static int audioCallback(
             double powerRight = song->rightChannel[song->lastFrame] * song->rightChannel[song->lastFrame];
             sum += (powerLeft + powerRight)/2;
             frameWriteCount += 1;
-            song->lastFrame += 1;
         }
         // window
-        song->leftSignalBuffer[n] = song->leftChannel[fftIdx+n] * hannWindow[n];
-        song->rightSignalBuffer[n] = song->rightChannel[fftIdx+n] * hannWindow[n];
+        song->leftSignalBuffer[n] = song->leftChannel[fftIdx+n] * blackmanHarrisWindow[n];
+        song->rightSignalBuffer[n] = song->rightChannel[fftIdx+n] * blackmanHarrisWindow[n];
     }
     // write out rest of song
     while (frameWriteCount < framesPerBuffer){
@@ -59,44 +58,34 @@ static int audioCallback(
         double powerRight = song->rightChannel[song->lastFrame] * song->rightChannel[song->lastFrame];
         sum += (powerLeft + powerRight)/2;
         frameWriteCount += 1;
-        song->lastFrame += 1;
     }
+    song->lastFrame += frameWriteCount;
     song->soundLevel = sum/framesPerBuffer;
 
     // fft
     fftw_execute(song->leftPlan); fftw_execute(song->rightPlan);
-    // calc dB
-    for (int i = 0; i < FFT_LENGTH; i++){
+
+    // calc power
+    for (int i = 0; i < FFT_OUT_LENGTH; i++){
         fftw_complex leftW, rightW;
-        if (i < FFT_OUT_LENGTH){
-            leftW[0] = song->leftOutBuffer[i][0];
-            leftW[1] = song->leftOutBuffer[i][1];
+        leftW[0] = song->leftOutBuffer[i][0] / blackmanHarrisWindowSum;
+        leftW[1] = song->leftOutBuffer[i][1] / blackmanHarrisWindowSum;
+        rightW[0] = song->rightOutBuffer[i][0] / blackmanHarrisWindowSum;
+        rightW[1] = song->rightOutBuffer[i][1] / blackmanHarrisWindowSum;
 
-            rightW[0] = song->rightOutBuffer[i][0];
-            rightW[1] = song->rightOutBuffer[i][1];
-        }else {
-            int mirror_i = FFT_LENGTH - i;
+        double powerLeft = leftW[0]*leftW[0] + leftW[1]*leftW[1];
+        double powerRight = rightW[0]*rightW[0] + rightW[1]*rightW[1];
 
-            leftW[0] = song->leftOutBuffer[mirror_i][0];
-            leftW[1] = -song->leftOutBuffer[mirror_i][1];
-
-            rightW[0] = song->rightOutBuffer[mirror_i][0];
-            rightW[1] = -song->rightOutBuffer[mirror_i][1];
-        }
-
-        double powerLeft = 2 * (leftW[0]*leftW[0] + leftW[1]*leftW[1]) / (FFT_LENGTH * FFT_LENGTH); // 2 accounts for Hann window halving power
-        double powerRight = 2 * (rightW[0]*rightW[0] + rightW[1]*rightW[1]) / (FFT_LENGTH * FFT_LENGTH);
-        if (i > 0 && i < FFT_LENGTH/2) {
+        if (0 < i && i < FFT_OUT_LENGTH - 1) {
             powerLeft *= 2;  // Account for symmetric frequencies
             powerRight *= 2;
         }
 
-        double freq = i * song->samplerate / FFT_LENGTH;
-        double aWeight = aWeightCurve(freq);
-        // powerLeft *= pow(10, (aWeight-2)/20);
-        // powerRight *= pow(10, (aWeight-2)/20);
+        double f = i * song->samplerate / FFT_LENGTH;
+        double aWeight = aWeightCurve(f);
         powerLeft *= aWeight;
         powerRight *= aWeight;
+
         double power = (powerLeft + powerRight)/2;
         song->levels[i] = power;
     }
@@ -111,10 +100,11 @@ class BarVizualizer{
         double barWidth;
         double numBars;
         sf::RenderWindow* window;
+        static constexpr float alpha = 0.8;
     
     public:
-        BarVizualizer(sf::RenderWindow* win, int n, double width){
-            barWidth = width;
+        BarVizualizer(sf::RenderWindow* win, int n){
+            barWidth = SCREEN_WIDTH/n;
             numBars = n;
             window = win;
             bars = vector<sf::RectangleShape>(numBars);
@@ -130,19 +120,24 @@ class BarVizualizer{
         void setHeights(vector<pair<int,int>> bands, vector<double> levels){
             for (int i = 0; i < bands.size(); i++){
                 auto [start, end] = bands[i];
-                double sum = 0.0;
+                double sum = 0;
                 int count = 0;
                 for (int j = start; j < end; j++){
                     sum += levels[j];
                     count++;
                 }
                 double avgPower = count > 0 ? sum / count : 0;
+
                 double db = clampdB(powerTodB(avgPower));
                 float norm = (db + DB_LOW)/DB_LOW;
+
                 norm = pow(norm, 1.5);
+
                 float height = norm * SCREEN_HEIGHT / 2;
                 float curWidth = bars[i].getSize().x;
-                heights[i] = 0.9 * heights[i] + 0.1 * height;
+
+                heights[i] = alpha*height + (1-alpha)*heights[i]; // EMA
+
                 bars[i].setSize(sf::Vector2f(curWidth, -heights[i]));
             }
         }
@@ -157,7 +152,7 @@ class BarVizualizer{
 
 int main(void){
     SF_INFO info;
-    SNDFILE* file  = sf_open("./music/song.flac", SFM_READ, &info);
+    SNDFILE* file  = sf_open(SONG_DIR, SFM_READ, &info);
     printFileInfo(&info);
     const int samplerate = info.samplerate;
     const float duration = info.frames/samplerate;
@@ -200,9 +195,15 @@ int main(void){
     sf::RenderWindow window(sf::VideoMode(SCREEN_WIDTH, SCREEN_HEIGHT), "Vizualizer");
     vector<pair<int, int>> bands = createOctaveBands(info.samplerate);
 
-    int numBars = REQUESTED_NUMBER_OF_POINTS;
-    double barWidth = SCREEN_WIDTH/numBars;
-    BarVizualizer viz = BarVizualizer(&window, numBars, barWidth);
+    int nBars = bands.size();
+
+    // for (const auto &[low, high] : bands){
+    //     printf("%d, %d\n", low, high);
+    // }
+
+
+
+    BarVizualizer viz = BarVizualizer(&window, nBars);
     // circle
     double r = 300;
     sf::CircleShape shape(300.f);
