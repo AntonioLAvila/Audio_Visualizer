@@ -93,7 +93,7 @@ static int audioCallback(
 }
 
 
-class BarVizualizer{
+class BarVisualizer{
     private:
         vector<sf::RectangleShape> bars;
         vector<double> heights;
@@ -103,7 +103,7 @@ class BarVizualizer{
         static constexpr float alpha = 0.8;
     
     public:
-        BarVizualizer(sf::RenderWindow* win, int n){
+        BarVisualizer(sf::RenderWindow* win, int n){
             barWidth = SCREEN_WIDTH/n;
             numBars = n;
             window = win;
@@ -117,7 +117,7 @@ class BarVizualizer{
             }
         }
 
-        void setHeights(vector<pair<int,int>> bands, vector<double> levels){
+        void setHeights(vector<pair<int,int>> bands, array<double, FFT_OUT_LENGTH> levels){
             for (int i = 0; i < bands.size(); i++){
                 auto [start, end] = bands[i];
                 double sum = 0;
@@ -136,7 +136,7 @@ class BarVizualizer{
                 float height = norm * SCREEN_HEIGHT / 2;
                 float curWidth = bars[i].getSize().x;
 
-                heights[i] = alpha*height + (1-alpha)*heights[i]; // EMA
+                heights[i] = alpha*heights[i] + (1-alpha)*height; // EMA
 
                 bars[i].setSize(sf::Vector2f(curWidth, -heights[i]));
             }
@@ -192,25 +192,17 @@ int main(void){
     int64_t startTime = getTime();
 
     // Graphic design is my passion
-    sf::RenderWindow window(sf::VideoMode(SCREEN_WIDTH, SCREEN_HEIGHT), "Vizualizer");
+    sf::RenderWindow window(sf::VideoMode(SCREEN_WIDTH, SCREEN_HEIGHT), "Visualizer");
     vector<pair<int, int>> bands = createOctaveBands(info.samplerate);
 
     int nBars = bands.size();
 
-    // for (const auto &[low, high] : bands){
-    //     printf("%d, %d\n", low, high);
-    // }
+    for (const auto &[low, high] : bands){
+        printf("%d, %d\n", low, high);
+    }
 
+    BarVisualizer viz = BarVisualizer(&window, nBars);
 
-
-    BarVizualizer viz = BarVizualizer(&window, nBars);
-    // circle
-    double r = 300;
-    sf::CircleShape shape(300.f);
-    shape.setOrigin(-SCREEN_WIDTH/2+r, -SCREEN_HEIGHT/2+r);
-    shape.setFillColor(sf::Color::Green);
-    float scale = 0;
-    const float alpha = 0.5;
     while (getTime() - startTime < (duration-0.5)*1000){
         sf::Event event;
         while (window.pollEvent(event)){
@@ -222,16 +214,10 @@ int main(void){
         viz.setHeights(bands, song.levels);
         window.clear();
         viz.draw();
-        scale = (1-alpha)*scale + alpha*song.soundLevel;
-        shape.setOrigin(-SCREEN_WIDTH/2+r*scale, -SCREEN_HEIGHT/2+r*scale);
-        shape.setRadius(r*scale);
-        window.draw(shape);
         window.display();
     }
 
 close:
-    fftw_free(rightChannel);
-    fftw_free(leftChannel);
     // Stop and close stream
     err = Pa_StopStream(stream);
     if(err != paNoError) Pa_Terminate();
@@ -239,5 +225,9 @@ close:
     if(err != paNoError) Pa_Terminate();
     // Terminate
     Pa_Terminate();
+
+    fftw_free(rightChannel);
+    fftw_free(leftChannel);
+
     return err;
 }

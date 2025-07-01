@@ -49,7 +49,7 @@ void printFileInfo(SF_INFO* info){
 
 
 double powerTodB(double A){
-    return 10.0 * log10(A + 1e-10);
+    return 10.0 * log10(A + 1e-20);
 }
 
 
@@ -107,6 +107,8 @@ vector<pair<int, int>> createOctaveBands(int fs){
 
         int kLower = fLower * FFT_LENGTH / fs;
         int kUpper = fUpper * FFT_LENGTH / fs;
+
+        kUpper = std::min(kUpper, FFT_OUT_LENGTH-1);
 
         bounds.emplace_back(kLower, kUpper);
     }

@@ -9,7 +9,7 @@ BUILD_DIR := build
 BIN := app
 
 # Source and object files
-SRCS := $(SRC_DIR)/viz.cpp $(SRC_DIR)/util.cpp
+SRCS := $(SRC_DIR)/main.cpp $(SRC_DIR)/util.cpp
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 
 # Default target
