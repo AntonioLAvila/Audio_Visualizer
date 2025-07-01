@@ -48,19 +48,13 @@ void printFileInfo(SF_INFO* info){
 }
 
 
-double powerTodB(double A){
-    return 10.0 * log10(A + 1e-20);
+double powerTodB(double P){
+    return 10.0 * log10(P + pow(10, -DB_LOW/10)); // ensures 0 power is -DB_LOW dB
 }
 
 
 double clampdB(double db) {
     return std::min(0.0, std::max(-DB_LOW, db));
-}
-
-
-void scale_complex(fftw_complex c, fftw_complex cNew, double scale){
-    cNew[0] = c[0]*scale;
-    cNew[1] = c[1]*scale;
 }
 
 
@@ -72,22 +66,13 @@ int64_t getTime(){
 }
 
 
-vector<int> linspace(double start, double stop, int num) {
-    vector<int> res(num);
-    double step = (stop - start)/num;
-    for (int i = 0; i < num; i++){
-        res[i] = start + (i * step);
-    }
-    return res;
-}
-
-
 double aWeightCurve(double f){
     double f2 = f * f;
     double num = 12194 * 12194 * f2 * f2;
     double den = (f2 + 20.6 * 20.6) * (f2 + 12194 * 12194) * sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9));
     return num/den;
 }
+
 
 double aWeightdB(double f){
     return 20 * log10(aWeightCurve(f)) + 2.0;
@@ -114,4 +99,26 @@ vector<pair<int, int>> createOctaveBands(int fs){
     }
     return bounds;
 }
+
+vector<pair<int, int>> createLinearBands() {
+    vector<pair<int, int>> bounds;
+    int kMax = FFT_OUT_LENGTH - 1;
+    int step = kMax / NUMBER_OF_POINTS;
+    int residual = kMax % NUMBER_OF_POINTS;
+    int offset = 0;
+    for (int i = 0; i < NUMBER_OF_POINTS; i++) {
+        int kLower = i * step + offset;
+        int kUpper = (i + 1) * step + offset;
+
+        if (residual > 0) {
+            kUpper++;
+            offset++;
+            residual--;
+        }
+
+        bounds.emplace_back(kLower, kUpper);
+    }
+    return bounds;
+}
+
 

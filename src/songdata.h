@@ -22,10 +22,10 @@ typedef struct SongData {
     fftw_plan rightPlan;
 
     double soundLevel;
-    std::array<double, FFT_OUT_LENGTH> levels;
+    std::array<double, FFT_OUT_LENGTH> PSD;
 
     SongData(double* l, double* r, long int t, int fs)
-        : leftChannel(l), rightChannel(r), totalFrames(t), lastFrame(0), soundLevel(0.0), samplerate(fs), levels({0}){      
+        : leftChannel(l), rightChannel(r), totalFrames(t), lastFrame(0), soundLevel(0.0), samplerate(fs), PSD({0}){      
         leftSignalBuffer = fftw_alloc_real(sizeof(double) * FFT_LENGTH);
         rightSignalBuffer = fftw_alloc_real(sizeof(double) * FFT_LENGTH);
         

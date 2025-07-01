@@ -20,10 +20,10 @@ extern const double blackmanHarrisWindowSum;
 void printFileInfo(SF_INFO* info);
 double powerTodB(double A);
 double clampdB(double db);
-void scale_complex(fftw_complex c, fftw_complex cNew, double scale);
 int64_t getTime();
-vector<int> linspace(double start, double stop, int num);
 double aWeightCurve(double f);
 double aWeightdB(double f);
 
 vector<pair<int, int>> createOctaveBands(int sampleRate);
+vector<pair<int, int>> createLinearBands();
+

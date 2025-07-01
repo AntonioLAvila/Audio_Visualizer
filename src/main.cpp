@@ -87,7 +87,7 @@ static int audioCallback(
         powerRight *= aWeight;
 
         double power = (powerLeft + powerRight)/2;
-        song->levels[i] = power;
+        song->PSD[i] = power;
     }
     return 0;
 }
@@ -100,7 +100,7 @@ class BarVisualizer{
         double barWidth;
         double numBars;
         sf::RenderWindow* window;
-        static constexpr float alpha = 0.8;
+        static constexpr float alpha = 0.95;
     
     public:
         BarVisualizer(sf::RenderWindow* win, int n){
@@ -117,28 +117,27 @@ class BarVisualizer{
             }
         }
 
-        void setHeights(vector<pair<int,int>> bands, array<double, FFT_OUT_LENGTH> levels){
+        void setHeights(const vector<pair<int,int>> bands, const array<double, FFT_OUT_LENGTH> powers){
+            static sf::Vector2f temp;
             for (int i = 0; i < bands.size(); i++){
                 auto [start, end] = bands[i];
-                double sum = 0;
-                int count = 0;
-                for (int j = start; j < end; j++){
-                    sum += levels[j];
-                    count++;
-                }
+                start = std::clamp(start, 0, (int)powers.size()); // for safety
+                end = std::clamp(end, 0, (int)powers.size());
+
+                double sum = std::accumulate(powers.begin() + start, powers.begin() + end, 0.0);
+                int count = end - start;
                 double avgPower = count > 0 ? sum / count : 0;
 
                 double db = clampdB(powerTodB(avgPower));
-                float norm = (db + DB_LOW)/DB_LOW;
-
-                norm = pow(norm, 1.5);
-
-                float height = norm * SCREEN_HEIGHT / 2;
-                float curWidth = bars[i].getSize().x;
+                float norm = (db + DB_LOW) / DB_LOW;
+                norm = pow(norm, 1.5); // Exponential scaling
+                float height =  norm * SCREEN_HEIGHT / 2;
 
                 heights[i] = alpha*heights[i] + (1-alpha)*height; // EMA
 
-                bars[i].setSize(sf::Vector2f(curWidth, -heights[i]));
+                temp.x = barWidth;
+                temp.y = -heights[i];
+                bars[i].setSize(temp);
             }
         }
 
@@ -193,7 +192,7 @@ int main(void){
 
     // Graphic design is my passion
     sf::RenderWindow window(sf::VideoMode(SCREEN_WIDTH, SCREEN_HEIGHT), "Visualizer");
-    vector<pair<int, int>> bands = createOctaveBands(info.samplerate);
+    vector<pair<int, int>> bands = createLinearBands();
 
     int nBars = bands.size();
 
@@ -211,7 +210,7 @@ int main(void){
                 goto close;
             }
         }
-        viz.setHeights(bands, song.levels);
+        viz.setHeights(bands, song.PSD);
         window.clear();
         viz.draw();
         window.display();
