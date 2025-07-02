@@ -44,7 +44,8 @@ static int audioCallback(
             double powerLeft = song->leftChannel[song->lastFrame] * song->leftChannel[song->lastFrame];
             double powerRight = song->rightChannel[song->lastFrame] * song->rightChannel[song->lastFrame];
             sum += (powerLeft + powerRight)/2;
-            frameWriteCount += 1;
+            song->lastFrame++;
+            frameWriteCount++;
         }
         // window
         song->leftSignalBuffer[n] = song->leftChannel[fftIdx+n] * blackmanHarrisWindow[n];
@@ -57,17 +58,17 @@ static int audioCallback(
         double powerLeft = song->leftChannel[song->lastFrame] * song->leftChannel[song->lastFrame];
         double powerRight = song->rightChannel[song->lastFrame] * song->rightChannel[song->lastFrame];
         sum += (powerLeft + powerRight)/2;
+        song->lastFrame++;
         frameWriteCount += 1;
     }
-    song->lastFrame += frameWriteCount;
     song->soundLevel = sum/framesPerBuffer;
 
     // fft
     fftw_execute(song->leftPlan); fftw_execute(song->rightPlan);
 
     // calc power
+    static fftw_complex leftW, rightW;
     for (int i = 0; i < FFT_OUT_LENGTH; i++){
-        fftw_complex leftW, rightW;
         leftW[0] = song->leftOutBuffer[i][0] / blackmanHarrisWindowSum;
         leftW[1] = song->leftOutBuffer[i][1] / blackmanHarrisWindowSum;
         rightW[0] = song->rightOutBuffer[i][0] / blackmanHarrisWindowSum;
@@ -100,17 +101,25 @@ class BarVisualizer{
         double barWidth;
         double numBars;
         sf::RenderWindow* window;
-        static constexpr float alpha = 0.95;
-    
+
+        vector<double> maxes;
+        vector<double> mins;
+
+        static constexpr float alpha = 0.05;
+        static constexpr double decayRate = 0.5/175;
+        static constexpr double minAlpha = 0;
+
     public:
         BarVisualizer(sf::RenderWindow* win, int n){
             barWidth = SCREEN_WIDTH/n;
             numBars = n;
             window = win;
             bars = vector<sf::RectangleShape>(numBars);
-            heights = vector<double>(numBars, 0.f);
+            heights = vector<double>(numBars, 0.0);
+            maxes = vector<double>(numBars, 0.0);
+            mins = vector<double>(numBars, -120.0);
             for (int i = 0; i < numBars; i++){
-                bars[i] = sf::RectangleShape(sf::Vector2f(barWidth, 0.f));
+                bars[i] = sf::RectangleShape(sf::Vector2f(barWidth, 0.0));
                 bars[i].setPosition(barWidth*i, SCREEN_HEIGHT);
                 bars[i].setOrigin(0,1);
                 bars[i].setFillColor(sf::Color::Cyan);
@@ -133,13 +142,54 @@ class BarVisualizer{
                 norm = pow(norm, 1.5); // Exponential scaling
                 float height =  norm * SCREEN_HEIGHT / 2;
 
-                heights[i] = alpha*heights[i] + (1-alpha)*height; // EMA
+                heights[i] = (1-alpha)*heights[i] + alpha*height; // EMA
 
                 temp.x = barWidth;
                 temp.y = -heights[i];
                 bars[i].setSize(temp);
             }
         }
+
+        void setHeights2(const vector<pair<int,int>> bands, const array<double, FFT_OUT_LENGTH> powers) {
+            static sf::Vector2f temp;
+
+            for (int i = 0; i < bands.size(); i++) {
+                auto [start, end] = bands[i];
+                start = std::clamp(start, 0, (int)powers.size());
+                end = std::clamp(end, 0, (int)powers.size());
+
+                double sum = std::accumulate(powers.begin() + start, powers.begin() + end, 0.0);
+                int count = end - start;
+                double avgPower = count > 0 ? sum / count : 0;
+
+                double db = clampdB(powerTodB(avgPower));
+
+                // Decay-based max tracking
+                if (db > maxes[i]) {
+                    maxes[i] = db; // instant rise
+                } else {
+                    maxes[i] -= decayRate; // decay over time
+                    if (maxes[i] < -DB_LOW + 5.0) { // optional: clamp max to be at least 5 dB above min
+                        maxes[i] = -DB_LOW + 5.0;
+                    }
+                }
+
+                // Adaptive scaling
+                double range = std::max(1e-6, maxes[i] - -DB_LOW);
+                float norm = (db - -DB_LOW) / range;
+                norm = std::clamp(norm, 0.0f, 1.0f);
+                norm = pow(norm, 1.5f);
+
+                float height = norm * SCREEN_HEIGHT / 2;
+
+                heights[i] = (1 - alpha) * heights[i] + alpha * height; // EMA smoothing
+
+                temp.x = barWidth;
+                temp.y = -heights[i];
+                bars[i].setSize(temp);
+            }
+        }
+
 
         void draw(){
             for (int i = 0; i < numBars; i++){
@@ -196,9 +246,9 @@ int main(void){
 
     int nBars = bands.size();
 
-    for (const auto &[low, high] : bands){
-        printf("%d, %d\n", low, high);
-    }
+    // for (const auto &[low, high] : bands){
+    //     printf("%d, %d\n", low, high);
+    // }
 
     BarVisualizer viz = BarVisualizer(&window, nBars);
 
@@ -210,7 +260,7 @@ int main(void){
                 goto close;
             }
         }
-        viz.setHeights(bands, song.PSD);
+        viz.setHeights2(bands, song.PSD);
         window.clear();
         viz.draw();
         window.display();
